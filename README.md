@@ -1,1 +1,1 @@
-# Lung-Cancer-3D-CT-Nodule-Detection-Malignancy-Scoring
+# Lung-Cancer-3D-CT-Nodule-Detection
