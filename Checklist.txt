@@ -1,0 +1,40 @@
+Lung Nodule Detection Project — Checklist
+
+Setup & Environment
+- [x] Clone GitHub repository 
+- [x] Create and activate Python virtual environment
+- [x ] Install required libraries
+- [x] Generate and commit requirements.txt
+
+Data Preparation
+- [x] Download and organize LIDC-IDRI dataset
+- [ ] Explore dataset: patients, nodules, image formats
+- [ ] Preprocess images:
+    - [ ] Normalize or resize CT slices if needed
+    - [ ] Convert 2D slices into 3D volumes per patient/nodule
+- [ ] Process masks:
+    - [ ] Verify masks presence correspond to nodules
+    - [ ] Create binary labels: "nodule present" vs "no nodule"
+
+Model Development
+- [ ] Define problem: Input = 3D CT volume; Output = binary label (nodule or no nodule)
+- [ ] Select and implement a suitable 3D CNN model architecture for binary classification
+- [ ] Train model on labeled data
+- [ ] Evaluate model using accuracy, precision, recall, F1-score
+
+Experimentation & Optimization
+- [ ] Tune hyperparameters (learning rate, batch size, epochs)
+- [ ] Try data augmentation on 3D volumes (rotation, flipping)
+- [ ] Test different model architectures if possible
+- [ ] Validate results with cross-validation or hold-out test set
+
+Results & Analysis
+- [ ] Visualize some sample predictions and masks
+- [ ] Analyze false positives and false negatives
+- [ ] Document model performance metrics and insights
+
+Documentation & Finalization
+- [ ] Write clear README (project goals, setup, usage)
+- [ ] Add code comments and explanations
+- [ ] Save final trained model and scripts
+- [ ] Prepare report or presentation summary
