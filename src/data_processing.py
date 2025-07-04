@@ -1,7 +1,6 @@
 import os
 import numpy as np
 from PIL import Image
-import tensorflow as tf
 
 IMG_SIZE = 128  # Target size for each slice
 
@@ -14,7 +13,7 @@ def load_slices_as_3d_volume(images_dir):
         img_array = np.array(img, dtype=np.float32) / 255.0  # Normalize to [0, 1]
         slices.append(img_array)
     volume_3d = np.stack(slices, axis=0)  # Shape: (num_slices, 128, 128)
-    return tf.convert_to_tensor(volume_3d, dtype=tf.float32)
+    return volume_3d
 
 def load_masks_as_3d_volume(masks_dirs, num_slices):
     combined_masks = np.zeros((num_slices, IMG_SIZE, IMG_SIZE), dtype=np.uint8)
@@ -26,22 +25,33 @@ def load_masks_as_3d_volume(masks_dirs, num_slices):
             mask_array = np.array(mask_img)
             combined_masks[idx] = np.maximum(combined_masks[idx], mask_array)
     combined_masks = (combined_masks > 0).astype(np.uint8)
-    return tf.convert_to_tensor(combined_masks, dtype=tf.uint8)
+    return combined_masks
 
-def process_patient(patient_dir):
-    nodule_folders = [f for f in os.listdir(patient_dir) if f.startswith('nodule-')]
-    data = []
-    labels = []
+def process_patient(raw_patient_path, processed_root_dir):
+    """
+    Process all nodules for a single patient and save their volume and mask as .npy files.
+    
+    Parameters:
+    - raw_patient_path: Path to raw patient folder (e.g., raw_data/LIDC-IDRI-0001)
+    - processed_root_dir: Path to processed folder root (e.g., processed/)
+    """
+    patient_id = os.path.basename(raw_patient_path)
+    output_patient_dir = os.path.join(processed_root_dir, patient_id)
+    os.makedirs(output_patient_dir, exist_ok=True)
+
+    nodule_folders = [f for f in os.listdir(raw_patient_path) if f.startswith('nodule-')]
+
     for nodule in nodule_folders:
-        nodule_path = os.path.join(patient_dir, nodule)
+        nodule_path = os.path.join(raw_patient_path, nodule)
         images_dir = os.path.join(nodule_path, 'images')
         masks_dirs = [os.path.join(nodule_path, f"mask-{i}") for i in range(4)]
 
         volume = load_slices_as_3d_volume(images_dir)
-        masks = load_masks_as_3d_volume(masks_dirs, volume.shape[0])
+        mask = load_masks_as_3d_volume(masks_dirs, volume.shape[0])
 
         label = 0 if nodule == 'nodule-0' else 1
 
-        data.append((volume, masks, label))
-    return data
-
+        # Save to disk
+        np.save(os.path.join(output_patient_dir, f"{nodule}_volume.npy"), volume)
+        np.save(os.path.join(output_patient_dir, f"{nodule}_mask.npy"), mask)
+        np.save(os.path.join(output_patient_dir, f"{nodule}_label.npy"), np.array(label, dtype=np.uint8))
