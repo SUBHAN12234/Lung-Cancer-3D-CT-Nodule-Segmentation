@@ -12,7 +12,7 @@ def load_slices_as_3d_volume(images_dir):
         img = Image.open(img_path).convert('L').resize((IMG_SIZE, IMG_SIZE))
         img_array = np.array(img, dtype=np.float32) / 255.0  # Normalize to [0, 1]
         slices.append(img_array)
-    volume_3d = np.stack(slices, axis=0)  # Shape: (num_slices, 128, 128)
+    volume_3d = np.stack(slices, axis=0)  # Shape: (depth, height, width)
     return volume_3d
 
 def load_masks_as_3d_volume(masks_dirs, num_slices):
@@ -24,13 +24,13 @@ def load_masks_as_3d_volume(masks_dirs, num_slices):
             mask_img = Image.open(mask_path).convert('L').resize((IMG_SIZE, IMG_SIZE))
             mask_array = np.array(mask_img)
             combined_masks[idx] = np.maximum(combined_masks[idx], mask_array)
-    combined_masks = (combined_masks > 0).astype(np.uint8)
+    combined_masks = (combined_masks > 0).astype(np.uint8)  # Binary mask
     return combined_masks
 
 def process_patient(raw_patient_path, processed_root_dir):
     """
     Process all nodules for a single patient and save their volume and mask as .npy files.
-    
+
     Parameters:
     - raw_patient_path: Path to raw patient folder (e.g., raw_data/LIDC-IDRI-0001)
     - processed_root_dir: Path to processed folder root (e.g., processed/)
@@ -49,9 +49,5 @@ def process_patient(raw_patient_path, processed_root_dir):
         volume = load_slices_as_3d_volume(images_dir)
         mask = load_masks_as_3d_volume(masks_dirs, volume.shape[0])
 
-        label = 0 if nodule == 'nodule-0' else 1
-
-        # Save to disk
         np.save(os.path.join(output_patient_dir, f"{nodule}_volume.npy"), volume)
         np.save(os.path.join(output_patient_dir, f"{nodule}_mask.npy"), mask)
-        np.save(os.path.join(output_patient_dir, f"{nodule}_label.npy"), np.array(label, dtype=np.uint8))
