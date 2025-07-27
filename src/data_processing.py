@@ -51,3 +51,13 @@ def process_patient(raw_patient_path, processed_root_dir):
 
         np.save(os.path.join(output_patient_dir, f"{nodule}_volume.npy"), volume)
         np.save(os.path.join(output_patient_dir, f"{nodule}_mask.npy"), mask)
+
+if __name__ == "__main__":
+    raw_data_dir = "../data/raw"         # path to raw CT data
+    processed_dir = "../data/processed"  # where .npy volumes and masks will be saved
+
+    for patient in os.listdir(raw_data_dir):
+        raw_patient_path = os.path.join(raw_data_dir, patient)
+        if os.path.isdir(raw_patient_path):
+            process_patient(raw_patient_path, processed_dir)
+
