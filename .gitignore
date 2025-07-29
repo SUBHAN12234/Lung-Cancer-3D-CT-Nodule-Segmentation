@@ -208,3 +208,6 @@ __marimo__/
 
 # Ignore the full data folder (large medical images)
 data/
+
+# Ignore the saving of each individual model
+checkpoints/
