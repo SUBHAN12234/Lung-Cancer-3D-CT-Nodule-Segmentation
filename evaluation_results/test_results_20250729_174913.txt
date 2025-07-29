@@ -1,0 +1,8 @@
+
+--- Test Evaluation Results ---
+loss: 0.3272
+accuracy: 0.9993
+mean_io_u: 0.6926
+dice_coef: 0.6728
+
+
