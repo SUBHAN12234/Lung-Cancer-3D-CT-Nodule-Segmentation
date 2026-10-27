@@ -1,188 +1,124 @@
+# 3D Lung Nodule Segmentation with a 3D U-Net
 
+A self-directed deep learning project that segments lung nodules in 3D CT scans. Given a CT volume around a nodule, the model predicts, voxel by voxel, which parts of the scan belong to the nodule.
 
-```markdown
-# Lung-Cancer-3D-CT-Nodule-Segmentation
+Built end to end in Python with TensorFlow/Keras: data preprocessing, a patient-level train/val/test split, a `tf.data` input pipeline, a 3D U-Net, training with checkpointing and resumable runs, and evaluation on a held-out test set. Trained locally on a laptop GPU (NVIDIA RTX 2050) under WSL2.
 
-3D Lung Nodule Segmentation using 3D U-Net
+## Why this problem
 
-This project focuses on developing a deep learning model for the **accurate segmentation of lung nodules from 3D Computed Tomography (CT) scans**. Early and precise detection of lung nodules is crucial for the timely diagnosis of lung cancer, significantly improving patient outcomes. This repository provides the code, trained models, and documentation for a 3D U-Net architecture implemented using **TensorFlow and Keras**.
+Radiologists outline lung nodules in CT scans by hand, slice by slice, which is slow and varies between readers. I chose segmentation over a yes/no classifier because it shows where the nodule is and its shape and size, taking more of that manual work off them. The model is 3D because nodules are 3D objects, and neighbouring slices help tell a nodule apart from a blood vessel.
 
----
+## Results
 
-## Overview & Problem Statement
+Best model (epoch 23), evaluated on the unseen test set:
 
-Lung cancer remains one of the leading causes of cancer-related deaths worldwide. CT scans are widely used for screening and diagnosis, but manually identifying and delineating small lung nodules is a time-consuming and error-prone task for radiologists.
+| Metric | Test score |
+|---|---|
+| Dice coefficient | **0.673** |
+| Mean IoU | 0.693 |
+| Dice loss | 0.327 |
+| Voxel accuracy | 0.999 |
 
-This project addresses this by providing **automated segmentation methods** that can significantly assist in this process. Our approach offers consistent and rapid analysis, thereby enhancing diagnostic accuracy and efficiency.
+**A note on accuracy:** nodules take up a tiny fraction of each volume, so a model that predicts "no nodule" everywhere would already score above 99% accuracy. That's why I trained on **Dice loss** and treat the **Dice coefficient** as the main metric, since it only measures overlap with the nodule itself.
 
----
+Training ran for 28 epochs. Validation Dice peaked at epoch 23 (0.680), and early stopping ended training five epochs later. The full per-epoch log, with notes, is in `All epochs of training.xlsx`.
 
-## Model Architecture: 3D U-Net
-
-The core of this project is a **3D U-Net**, a convolutional neural network architecture renowned for its effectiveness in biomedical image segmentation. The 3D U-Net extends the original 2D U-Net by processing volumetric data directly, allowing it to capture spatial context across slices, which is vital for 3D medical images like CT scans.
-
-The architecture consists of:
-
-* **Encoder (Contracting Path):** Downsamples the input CT volume through a series of 3D convolutional layers and max-pooling operations, extracting hierarchical features.
-* **Decoder (Expansive Path):** Upsamples the feature maps, combining them with high-resolution features from the encoder via skip connections. These skip connections are crucial for propagating fine-grained spatial information, enabling precise localization of nodules.
-* **Output Layer:** A final 3D convolutional layer with a sigmoid activation function outputs a probability map, indicating the likelihood of each voxel belonging to a lung nodule.
-
----
-
-## Dataset
-
-This project utilizes a subset of the **Lung Image Database Consortium (LIDC-IDRI) dataset**. The LIDC-IDRI dataset is a publicly available resource containing thoracic CT scans with marked-up annotated lesions by multiple radiologists. The data undergoes preprocessing steps to ensure consistency and suitability for 3D deep learning models.
-
----
-
-## Key Technologies Used
-
-* **Python:** The primary programming language.
-* **TensorFlow & Keras:** Deep learning framework for building, training, and evaluating the 3D U-Net model.
-* **NumPy:** For numerical operations and data handling.
-* **WSL2 (Windows Subsystem for Linux 2) & NVIDIA GPU:** For accelerated training and inference.
-* **Git & GitHub:** For version control and project hosting.
-
----
-
-## Performance
-
-The model was trained for a total of **28 epochs** (initially 20, then resumed for 8 more until EarlyStopping triggered). The best performing model, identified at Epoch 23, demonstrated strong generalization capabilities on the unseen test set.
-
-Here are the final evaluation metrics on the test dataset for the best overall model (Epoch 23):
+## How it works
 
 ```
-
-loss: 0.3272
-accuracy: 0.9993
-mean\_io\_u: 0.6926
-dice\_coef: 0.6728
-
+LIDC-IDRI scans ──► data_processing.py ──► generate_splits.py ──► data_loader.py ──► train.py ──► evaluate_model.py
+ (PNG slices +      (3D volumes + binary     (70/20/10 split        (tf.data pipeline,   (3D U-Net,     (test-set metrics,
+  radiologist        masks saved as .npy)     by patient)            fixed depth of 32)   Dice loss)      timestamped report)
+  masks)
 ```
 
-These results indicate a robust performance in segmenting lung nodules, achieving a high degree of overlap with the ground truth annotations.
+### 1. Data preprocessing (`src/data_processing.py`)
+- **Dataset:** the public [LIDC-IDRI](https://www.cancerimagingarchive.net/collection/lidc-idri/) collection of thoracic CT scans, using per-nodule slice crops.
+- Each nodule's 2D slices are resized to 128×128, normalised to [0, 1] and stacked into a 3D volume.
+- Each nodule has outlines from up to **four radiologists**. I combine them (a voxel counts as nodule if any radiologist marked it) into one binary mask.
+- Volumes and masks are saved as `.npy` files so training doesn't re-decode images every epoch.
 
----
+### 2. Train / validation / test split (`src/generate_splits.py`)
+- 70% train, 20% validation, 10% test, with a fixed random seed for reproducibility.
+- The split is done **by patient, not by nodule**. One patient can have several nodules, and splitting by nodule would let the model see the same patient's scans in both training and testing, which inflates results.
 
-## Project Structure
+### 3. Input pipeline (`src/data_loader.py`)
+- Built on `tf.data`: shuffling for training, parallel loading (`AUTOTUNE`) and prefetching so the GPU isn't left waiting on disk.
+- Nodules span different numbers of slices, but the model needs a fixed input size. Volumes are **padded** to 32 slices if shorter, or **centre-cropped** to 32 if longer, keeping the middle of the nodule.
 
-The repository is organized as follows:
+### 4. Model (`src/model.py`)
+A 3D U-Net with input shape `32 × 128 × 128 × 1`:
+- **Encoder:** three levels (32 → 64 → 128 filters). Each level has two 3×3×3 convolutions with batch normalisation and ReLU, then max pooling to halve the resolution.
+- **Bottleneck:** 256 filters.
+- **Decoder:** transposed convolutions upsample back to full resolution. **Skip connections** concatenate the matching encoder features, which brings back the fine spatial detail lost during downsampling. That detail is what makes the boundaries sharp.
+- **Output:** a 1×1×1 convolution with sigmoid, giving a per-voxel probability of being nodule.
+
+### 5. Training (`src/train.py`)
+- **Loss:** Dice loss, to handle the extreme class imbalance described above.
+- **Optimiser:** Adam, learning rate 1e-4.
+- **Batch size 1**, because 3D volumes are memory-heavy and the laptop GPU has limited VRAM.
+- **Checkpointing:** the model is saved after every epoch, and separately whenever validation loss hits a new all-time best.
+- **Resumable training:** a run can pick up from any saved checkpoint, so long training could be split across several sessions.
+- **Early stopping** (patience 5) on validation loss, restoring the best weights.
+
+### 6. Evaluation (`src/evaluate_model.py`)
+Loads the best model, scores it on the test set, and writes the metrics to a timestamped file in `evaluation_results/`.
+
+## What I learned
+
+- **Pick the metric that matches the problem.** 99.9% accuracy looked great but meant very little. Learning why, and switching to Dice, was one of the biggest lessons of the project.
+- **Avoid data leakage.** Splitting by patient rather than by nodule is a small detail that decides whether the test score can be trusted.
+- **Engineer around hardware limits.** Batch size 1, a fixed input depth, an efficient input pipeline and resumable training were all needed to train a 3D model on a laptop GPU.
+- **Read the training curves, not just the final number.** Validation Dice swung a lot between epochs (for example, it dropped to 0.11 at epoch 18 and recovered to 0.67 at epoch 20), and training Dice reached about 0.82 while validation stayed around 0.6–0.68. That points to overfitting and noise from a small validation set, which shaped the improvements below.
+
+## Limitations and next steps
+
+- **Overfitting:** add 3D data augmentation (flips, rotations, intensity changes, elastic deformation) and more dropout or regularisation.
+- **Loss function:** try Dice + binary cross-entropy, or focal loss, which often train more stably than Dice alone.
+- **Better evaluation:** report Dice and IoU per nodule on thresholded predictions, plus precision and recall, instead of only averaged voxel metrics.
+- **Input handling:** resample scans to a consistent physical voxel spacing, and use sliding-window inference instead of cropping to 32 slices so large nodules aren't cut off.
+- **Post-processing:** remove small false-positive blobs with connected-component analysis.
+- **Engineering:** move settings out of the scripts into a config file or command-line arguments, share the duplicated Dice code in one module, and add unit tests for the preprocessing and loss functions.
+
+## Project structure
 
 ```
-
-Lung-Cancer-3D-CT-Nodule-Segmentation/
-├── data/
-│   ├── processed/          \# Preprocessed CT scans and masks (e.g., .npy files)
-│   └── splits/             \# Files defining train, validation, and test splits
-├── models/
-│   ├── best\_overall\_3d\_unet\_model.keras  \# The absolute best model saved across all runs (Epoch 23)
-│   ├── final\_3d\_unet\_model.keras         \# Best model from the last training session (also Epoch 23)
-│   └── final\_3d\_unet\_model\_epoch\_20\_best.keras \# (Your manual backup of Epoch 20)
-├── checkpoints/            \# Saved model checkpoints from each epoch during training
-│   ├── model\_epoch\_01.keras
-│   ├── ...
-│   └── model\_epoch\_28.keras
-├── evaluation\_results/     \# Directory to store test evaluation results
-│   └── test\_results\_YYYYMMDD\_HHMMSS.txt
 ├── src/
-│   ├── data\_loader.py      \# Script for loading and preprocessing data
-│   ├── model.py            \# Defines the 3D U-Net model architecture
-│   ├── train.py            \# Script for training the model
-│   └── evaluate\_model.py   \# Script for evaluating the trained model on test data
-├── .gitignore              \# Specifies files/directories to ignore in Git (e.g., checkpoints/)
-└── README.md               \# This file
-
-````
-
----
-
-## Setup and Installation
-
-### 1. Clone the Repository:
-
-```bash
-git clone [https://github.com/SUBHAN12234/Lung-Cancer-3D-CT-Nodule-Segmentation.git](https://github.com/SUBHAN12234/Lung-Cancer-3D-CT-Nodule-Segmentation.git)
-cd Lung-Cancer-3D-CT-Nodule-Segmentation
-````
-
-### 2\. Set up Conda Environment (Recommended for GPU support):
-
-Ensure you have Miniconda or Anaconda installed.
-
-```bash
-conda create -n tf-gpu python=3.9
-conda activate tf-gpu
-pip install tensorflow[and-cuda]==2.15.0 # Or your specific TF/CUDA version
-pip install numpy pandas scikit-learn matplotlib
+│   ├── data_processing.py   # PNG slices + radiologist masks → 3D .npy volumes and binary masks
+│   ├── generate_splits.py   # patient-level 70/20/10 train/val/test split
+│   ├── data_loader.py       # tf.data pipeline with depth padding/cropping
+│   ├── model.py             # 3D U-Net architecture
+│   ├── train.py             # training, checkpointing, resume and early stopping
+│   └── evaluate_model.py    # test-set evaluation and results report
+├── models/                  # trained models, including best_overall_3d_unet_model.keras (epoch 23)
+├── evaluation_results/      # timestamped test-set results
+├── All epochs of training.xlsx  # per-epoch training and validation metrics with notes
+├── gpu.py                   # quick check that TensorFlow can see the GPU
+└── requirements.txt
 ```
 
-**Note:** Adjust `tensorflow[and-cuda]==2.15.0` based on your CUDA/cuDNN setup if necessary.
+The `data/` folder is not included in the repository because of the dataset's size. Download LIDC-IDRI separately and run the preprocessing steps below.
 
-### 3\. Prepare Data:
+## Running it
 
-  * Obtain the LIDC-IDRI dataset.
-  * Run your data preprocessing script (if you have one, or manually place processed `.npy` files into `data/processed` and split definitions into `data/splits` as per your `data_loader.py`).
+```bash
+git clone https://github.com/SUBHAN12234/Lung-Cancer-3D-CT-Nodule-Segmentation.git
+cd Lung-Cancer-3D-CT-Nodule-Segmentation
+pip install -r requirements.txt
+python gpu.py                      # confirm the GPU is visible
 
------
+cd src
+python data_processing.py          # expects raw data in data/raw/
+cd ..
+python src/generate_splits.py      # writes data/splits/{train,val,test}.txt
+python src/train.py                # set RESUME_TRAINING in train.py to resume from a checkpoint
+python src/evaluate_model.py       # scores models/best_overall_3d_unet_model.keras on the test set
+```
 
-## Usage
+## Tech stack
 
-### Training the Model
-
-To start or resume training the 3D U-Net model:
-
-1.  **Configure `src/train.py`:**
-
-      * Adjust `TOTAL_TARGET_EPOCHS` as desired.
-      * Set `RESUME_TRAINING = True` and `LAST_CHECKPOINT_PATH` to the `.keras` file of the epoch you wish to resume from (e.g., `./checkpoints/model_epoch_20.keras`).
-
-2.  **Run Training:**
-
-    ```bash
-    conda activate tf-gpu
-    cd src/
-    python train.py
-    ```
-
-The training process will save epoch checkpoints in `checkpoints/` and the best model from the run (based on `val_loss`) to `models/final_3d_unet_model.keras`. The `models/best_overall_3d_unet_model.keras` will also be updated if a new all-time best `val_loss` is achieved.
-
-### Evaluating the Model
-
-To evaluate the best trained model on the unseen test dataset:
-
-1.  **Configure `src/evaluate_model.py`:**
-
-      * Ensure `MODEL_TO_EVALUATE_PATH` points to the model you want to test (e.g., `models/best_overall_3d_unet_model.keras`).
-
-2.  **Run Evaluation:**
-
-    ```bash
-    conda activate tf-gpu
-    cd src/
-    python evaluate_model.py
-    ```
-
-The results will be printed to the console and saved to a timestamped text file in the `evaluation_results/` directory.
-
------
-
-## Future Work
-
-  * **Advanced Data Augmentation:** Implement more sophisticated 3D data augmentation techniques (e.g., elastic deformations, intensity shifts) to improve model robustness.
-  * **Hyperparameter Optimization:** Conduct a more thorough search for optimal learning rates, batch sizes, and network configurations.
-  * **Loss Function Exploration:** Experiment with hybrid loss functions (e.g., Dice + BCE) or focal loss to address class imbalance more effectively.
-  * **Model Ensembling:** Combine predictions from multiple trained models to potentially achieve higher overall performance.
-  * **Post-processing:** Implement post-processing techniques on the segmentation masks (e.g., connected component analysis, morphological operations) to refine predictions.
-  * **Quantification & Visualization:** Develop tools for quantitative analysis of nodule characteristics and 3D visualization of segmentation results.
-
------
+Python · TensorFlow / Keras · NumPy · Pillow · WSL2 · NVIDIA GPU (CUDA)
 
 ## Acknowledgements
 
-  * **LIDC-IDRI Dataset:** This project utilizes data from the Lung Image Database Consortium and Image Database Resource Initiative (LIDC-IDRI) public database.
-  * **TensorFlow & Keras Teams:** For providing powerful and flexible deep learning frameworks.
-
-<!-- end list -->
-
-```
-```
+CT data from the Lung Image Database Consortium and Image Database Resource Initiative (LIDC-IDRI), hosted by The Cancer Imaging Archive.
